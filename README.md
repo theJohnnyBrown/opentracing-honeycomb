@@ -14,7 +14,7 @@ Add `[opentracing-honeycomb "0.1.0-SNAPSHOT"]` to your leiningen dependencies
 
 ```clojure
 (ns myapplication.core
-  (:require [opentracing-honeycomb :refer get-tracer]))
+  (:require [opentracing-honeycomb.honeycomb :refer [get-tracer]]))
 
 ;
 
