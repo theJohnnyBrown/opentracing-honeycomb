@@ -1,0 +1,6 @@
+{:paths   ["src/clj"]
+ :deps {org.clojure/clojure {:mvn/version "1.10.1"}
+        com.taoensso/timbre {:mvn/version "5.1.2"}
+        io.opentracing/opentracing-api {:mvn/version "0.33.0"}
+        io.opentracing/opentracing-util {:mvn/version "0.33.0"}}}
+;; [ch.qos.logback/logback-classic "1.2.3" :exclusions [org.slf4j/slf4j-api]]

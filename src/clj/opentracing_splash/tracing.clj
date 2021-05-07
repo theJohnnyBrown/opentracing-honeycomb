@@ -1,29 +1,31 @@
-(ns opentracing-honeycomb.honeycomb
+(ns opentracing-splash.tracing
   (:gen-class)
   (:require [clojure.string :as str]
-            [clojure.data.codec.base64 :as base64]
-            [clj-honeycomb.core :as honeycomb])
+            ;; [clojure.data.codec.base64 :as base64]
+            [taoensso.timbre :as timbre])
   (:import (io.opentracing Span Tracer SpanContext Tracer$SpanBuilder ScopeManager Scope)
            (io.opentracing References)
            (io.opentracing.tag Tag)
            (io.opentracing.util ThreadLocalScopeManager ThreadLocalScope GlobalTracer)
            (java.util Map UUID Map$Entry)
-           (java.util.logging Logger Level)))
+           (java.util.logging Logger Level)
+           (java.util Base64)))
 
 (defn log-info [msg]
   (.log  (Logger/getLogger (str *ns*)) Level/INFO msg))
 
-
 (defn encode-uuid [u]
-  (-> u str (.getBytes) base64/encode slurp))
+  (let [encoder (Base64/getEncoder )]
+    (->> u str (.getBytes) (.encode encoder) slurp)))
 
 (defn decode-uuid [u]
- (-> (.getBytes u) base64/decode slurp UUID/fromString))
+  (let [decoder (Base64/getDecoder)]
+    (->> (.getBytes u) (.decode decoder) slurp UUID/fromString)))
 
 (defn now-micros ^long []
   (* (System/currentTimeMillis) 1000))
 
-(defrecord HoneySpanContext [trace-id span-id parent-id baggage]
+(defrecord SplashSpanContext [trace-id span-id parent-id baggage]
   SpanContext
   (toTraceId [this] (encode-uuid trace-id))
   (toSpanId [this] (encode-uuid span-id))
@@ -31,15 +33,15 @@
 
 (defn send! [tracer span]
   (let [timestamp-ms (/ (.start-time-micros span) 1000)
-        honey-span (merge (.-tags span)
+        splash-span (merge (.-tags span)
                     {"name" (.-operation span)
                      "duration_ms" (/ (- (.-end-time-micros span) (.-start-time-micros span)) 1000)
                      "trace.span_id" (-> span .-context :span-id)
                      "trace.trace_id" (-> span .-context :trace-id)
                      "trace.parent_id" (-> span .-context :parent-id)})]
-    (honeycomb/send (:honey-client tracer) honey-span {:timestamp timestamp-ms})))
+    (timbre/info splash-span)))
 
-(deftype HoneySpan [operation context tags log-events start-time-micros end-time-micros tracer]
+(deftype SplashSpan [operation context tags log-events start-time-micros end-time-micros tracer]
   Span
   (context [this] context)
   (^Span setTag [^Span this ^String k ^String v]
@@ -93,7 +95,7 @@
 
 
 (defn get-span
-  ([operation] (get-span operation (->HoneySpanContext (UUID/randomUUID) (UUID/randomUUID) nil {})
+  ([operation] (get-span operation (->SplashSpanContext (UUID/randomUUID) (UUID/randomUUID) nil {})
                          {} ;; tags
                          [] ;; log-events
                          (now-micros) ;; start-time-micros
@@ -101,12 +103,12 @@
                          (GlobalTracer/get)  ;; tracer
                          ))
   ([operation context tags log-events start-time-micros end-time-micros tracer]
-   (->HoneySpan operation context tags log-events start-time-micros end-time-micros tracer)))
+   (->SplashSpan operation context tags log-events start-time-micros end-time-micros tracer)))
 
 (defn child-context [ctx]
-  (->HoneySpanContext (:trace-id ctx) (UUID/randomUUID) (:span-id ctx) (:baggage ctx)))
+  (->SplashSpanContext (:trace-id ctx) (UUID/randomUUID) (:span-id ctx) (:baggage ctx)))
 
-(deftype HoneySpanBuilder [op-name start-time-micros references tags ignore-active-span scope-manager tracer]
+(deftype SplashSpanBuilder [op-name start-time-micros references tags ignore-active-span scope-manager tracer]
   Tracer$SpanBuilder
   (^Tracer$SpanBuilder asChildOf [this ^Span parent]
    (.addReference this References/CHILD_OF (.context parent)))
@@ -150,7 +152,7 @@
                               (not
                                (and (-> references first second :trace-id)
                                     (-> references first second :span-id))))
-                          (->HoneySpanContext (UUID/randomUUID) (UUID/randomUUID) nil {})
+                          (->SplashSpanContext (UUID/randomUUID) (UUID/randomUUID) nil {})
 
                           :else
                           (child-context (-> references first second)))
@@ -167,14 +169,14 @@
     {}))
 
 
-(defrecord HoneyTracer [scope-manager service-name honey-client]
+(defrecord SplashTracer [scope-manager service-name opentracing-client]
   Tracer
   (^ScopeManager scopeManager [this] scope-manager)
   (^Span activeSpan [this] (.activeSpan scope-manager))
   (^Scope activateSpan [this ^Span span] (.activate scope-manager span))
 
   (buildSpan [this op-name]
-   (->HoneySpanBuilder op-name nil [] {} false scope-manager this))
+   (->SplashSpanBuilder op-name nil [] {} false scope-manager this))
 
   (inject [this sc format carrier]
     (.put carrier "traceparent" (str "00-" (.toTraceId sc) "-" (.toSpanId sc) "-01"))
@@ -191,15 +193,15 @@
                 baggage (parse-tracestate tracestate)
                 span-id (UUID/randomUUID)]
             (prn "extracted span" (decode-uuid traceid) span-id (decode-uuid parent-span-id))
-            (->HoneySpanContext (decode-uuid traceid) (decode-uuid parent-span-id) nil (or baggage {})))
+            (->SplashSpanContext (decode-uuid traceid) (decode-uuid parent-span-id) nil (or baggage {})))
           (catch Exception e
             (do
               (log-info  (str "invalid trace data: " (pr-str entries)))
               (throw (IllegalArgumentException. (str "invalid trace data: " (pr-str entries))))))))))
 
-  (^void close [this]
-   (.close honey-client)))
+  (^void close [this] nil))
 
 (defn get-tracer [service-name client-config]
-  (HoneyTracer. (ThreadLocalScopeManager.) service-name
-                (honeycomb/client (assoc-in client-config [:global-fields :service-name] service-name))))
+  (SplashTracer. (ThreadLocalScopeManager.)
+                service-name
+                {}))
